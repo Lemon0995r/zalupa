@@ -7,75 +7,106 @@ import os
 class GitHubUserFinder:
     def __init__(self, root):
         self.root = root
-        self.root.title("GitHub User Finder")
-        self.root.geometry("400x500")
+        self.root.title("GitHub User Finder PRO")
+        self.root.geometry("450x550")
         self.favorites_file = "favorites.json"
+        self.current_user_data = None
         
-        # UI Элементы
-        tk.Label(root, text="Введите имя пользователя GitHub:").pack(pady=5)
-        self.search_entry = tk.Entry(root, width=30)
+        # UI
+        tk.Label(root, text="Имя пользователя GitHub:", font=('Arial', 10, 'bold')).pack(pady=5)
+        self.search_entry = tk.Entry(root, width=35)
         self.search_entry.pack(pady=5)
         
-        tk.Button(root, text="Найти", command=self.search_user).pack(pady=5)
+        self.search_btn = tk.Button(root, text="Найти пользователя", command=self.search_user)
+        self.search_btn.pack(pady=5)
         
-        self.result_label = tk.Label(root, text="", fg="blue", cursor="hand2")
-        self.result_label.pack(pady=10)
+        self.info_text = tk.Label(root, text="", justify=tk.LEFT)
+        self.info_text.pack(pady=10)
         
-        self.fav_button = tk.Button(root, text="Добавить в избранное", state=tk.DISABLED, command=self.add_to_favorites)
+        self.fav_button = tk.Button(root, text="⭐ Добавить в избранное", state=tk.DISABLED, command=self.add_to_favorites)
         self.fav_button.pack(pady=5)
         
-        tk.Label(root, text="Избранные:").pack(pady=10)
-        self.fav_listbox = tk.Listbox(root, width=40, height=10)
+        tk.Label(root, text="Список избранных (из JSON):").pack(pady=10)
+        self.fav_listbox = tk.Listbox(root, width=50, height=10)
         self.fav_listbox.pack(pady=5)
         
-        self.current_user = None
         self.load_favorites()
 
     def search_user(self):
         username = self.search_entry.get().strip()
+        
+        # Валидация 1: Пустое поле
         if not username:
-            messagebox.showwarning("Ошибка", "Поле поиска не должно быть пустым!")
+            messagebox.showwarning("Валидация", "Поле поиска не должно быть пустым!")
             return
 
-        response = requests.get(f"https://github.com{username}")
+        self.info_text.config(text="Поиск...", fg="black")
         
-        if response.status_code == 200:
-            data = response.json()
-            self.current_user = data['login']
-            self.result_label.config(text=f"Найден: {data['name'] or data['login']} (@{data['login']})")
-            self.fav_button.config(state=tk.NORMAL)
-        else:
-            self.result_label.config(text="Пользователь не найден", fg="red")
-            self.fav_button.config(state=tk.DISABLED)
+        try:
+            # Исправленный URL и обработка сетевых ошибок
+            response = requests.get(f"https://api.github.com/users/{username}", timeout=10)
+            
+            # Проверка статус-кодов
+            if response.status_code == 200:
+                data = response.json()
+                # Проверка наличия ключей в JSON
+                login = data.get('login', 'Неизвестно')
+                name = data.get('name') or "Имя не указано"
+                bio = data.get('bio') or "Био отсутствует"
+                
+                self.current_user_data = login
+                self.info_text.config(text=f"Логин: {login}\nИмя: {name}\nBio: {bio}", fg="green")
+                self.fav_button.config(state=tk.NORMAL)
+                
+            elif response.status_code == 404:
+                self.info_text.config(text="Ошибка: Пользователь не найден (404)", fg="red")
+                self.fav_button.config(state=tk.DISABLED)
+            else:
+                self.info_text.config(text=f"Ошибка API: Статус {response.status_code}", fg="red")
+                
+        except requests.exceptions.ConnectionError:
+            messagebox.showerror("Ошибка сети", "Проверьте интернет-соединение")
+        except requests.exceptions.Timeout:
+            messagebox.showerror("Ошибка", "Время ожидания запроса истекло")
+        except Exception as e:
+            messagebox.showerror("Критическая ошибка", f"Произошло непредвиденное: {e}")
 
     def add_to_favorites(self):
-        if self.current_user:
-            favorites = self.get_favorites_list()
-            if self.current_user not in favorites:
-                favorites.append(self.current_user)
-                self.save_favorites(favorites)
-                self.update_listbox()
-                messagebox.showinfo("Успех", f"{self.current_user} добавлен в избранное!")
-            else:
-                messagebox.showinfo("Инфо", "Пользователь уже в списке.")
+        if not self.current_user_data:
+            return
+            
+        favs = self.get_favorites_list()
+        if self.current_user_data not in favs:
+            favs.append(self.current_user_data)
+            self.save_to_json(favs)
+            self.update_listbox(favs)
+            messagebox.showinfo("Успех", f"{self.current_user_data} сохранен!")
+        else:
+            messagebox.showwarning("Внимание", "Пользователь уже в избранном")
 
     def get_favorites_list(self):
-        if os.path.exists(self.favorites_file):
-            with open(self.favorites_file, "r") as f:
+        if not os.path.exists(self.favorites_file):
+            return []
+        try:
+            with open(self.favorites_file, "r", encoding="utf-8") as f:
                 return json.load(f)
-        return []
+        except (json.JSONDecodeError, IOError):
+            return []
 
-    def save_favorites(self, favorites):
-        with open(self.favorites_file, "w") as f:
-            json.dump(favorites, f)
+    def save_to_json(self, data):
+        try:
+            with open(self.favorites_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4, ensure_ascii=False)
+        except IOError as e:
+            messagebox.showerror("Ошибка записи", f"Не удалось сохранить файл: {e}")
 
     def load_favorites(self):
-        self.update_listbox()
+        self.update_listbox(self.get_favorites_list())
 
-    def update_listbox(self):
+    def update_listbox(self, items):
         self.fav_listbox.delete(0, tk.END)
-        for user in self.get_favorites_list():
-            self.fav_listbox.insert(tk.END, user)
+        for item in items:
+            self.fav_listbox.insert(tk.END, item)
 
 if __name__ == "__main__":
     root = tk.Tk()
